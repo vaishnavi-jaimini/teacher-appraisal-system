@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Comparison — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <a class="back-link" id="back-link" href="/index.html">← Back</a>
+
+  <div class="card" style="margin-top:14px;">
+    <h1 id="title">Comparison</h1>
+    <div class="error-msg" id="err"></div>
+    <div id="content"></div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script src="/js/chart.js"></script>
+<script>
+(async function () {
+  const session = await api("/api/session");
+  if (!session.role) { window.location.href = "/index.html"; return; }
+  renderTopbar(session);
+  document.getElementById("back-link").href = session.role === "principal" ? "/principal-dashboard.html" : "/teacher-dashboard.html";
+
+  const params = new URLSearchParams(window.location.search);
+  const teacherId = params.get("teacherId");
+  const err = document.getElementById("err");
+  if (!teacherId) { showError(err, "No teacher specified."); return; }
+
+  try {
+    const cmp = await api(`/api/comparison/${teacherId}`);
+    document.getElementById("title").textContent = `Comparison — ${cmp.teacher.name}`;
+
+    const content = document.getElementById("content");
+
+    if (!cmp.self || !cmp.principal) {
+      content.innerHTML = `<div class="empty-state">
+        ${!cmp.self ? "Self-appraisal not yet submitted. " : ""}
+        ${!cmp.principal ? "Principal rating not yet submitted." : ""}
+        <br/>The comparison will appear here once both are complete.
+      </div>`;
+      return;
+    }
+
+    const gap = Math.round((cmp.overall.principal - cmp.overall.self) * 100) / 100;
+    const gapText = gap > 0 ? `+${gap} (principal rated higher)` : gap < 0 ? `${gap} (principal rated lower)` : "0 (perfect agreement)";
+
+    content.innerHTML = `
+      <div class="stat-row">
+        <div class="stat-tile"><div class="stat-label">Self-Rating Average</div><div class="stat-value self">${cmp.overall.self.toFixed(2)}</div></div>
+        <div class="stat-tile"><div class="stat-label">Principal Rating Average</div><div class="stat-value principal">${cmp.overall.principal.toFixed(2)}</div></div>
+        <div class="stat-tile"><div class="stat-label">Overall Gap</div><div class="stat-value">${gapText}</div></div>
+      </div>
+
+      <div class="legend-row">
+        <div class="legend-item"><span class="legend-swatch self"></span>Self-Rating</div>
+        <div class="legend-item"><span class="legend-swatch principal"></span>Principal Rating</div>
+      </div>
+      <div id="chart-host"></div>
+
+      <h2 style="margin-top:28px;">All 30 questions</h2>
+      <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>#</th><th>Category</th><th>Question</th>
+          <th class="num">Self</th><th class="num">Principal</th><th class="num">Gap</th>
+        </tr></thead>
+        <tbody>
+          ${cmp.rows.map(r => `
+            <tr>
+              <td>${r.id}</td>
+              <td class="muted">${escapeHtml(r.category)}</td>
+              <td>${escapeHtml(r.text)}</td>
+              <td class="num" style="color:var(--series-self); font-weight:600;">${r.self ?? "—"}</td>
+              <td class="num" style="color:var(--series-principal); font-weight:600;">${r.principal ?? "—"}</td>
+              <td class="num">${r.gap != null ? (r.gap > 0 ? "+" + r.gap : r.gap) : "—"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      </div>
+
+      ${cmp.self.comments ? `<h2 style="margin-top:24px;">Teacher's comments</h2><p class="secondary-text">${escapeHtml(cmp.self.comments)}</p>` : ""}
+      ${cmp.principal.comments ? `<h2 style="margin-top:24px;">Principal's comments</h2><p class="secondary-text">${escapeHtml(cmp.principal.comments)}</p>` : ""}
+
+      ${session.role === "principal" ? `
+        <div class="btn-row" style="margin-top:24px;">
+          <a class="btn" href="/api/export/csv/${teacherId}">⬇ Download this teacher's CSV</a>
+        </div>
+      ` : ""}
+    `;
+
+    renderComparisonChart(document.getElementById("chart-host"), cmp.categoryAverages);
+    window.addEventListener("resize", () => renderComparisonChart(document.getElementById("chart-host"), cmp.categoryAverages));
+  } catch (e) {
+    showError(err, e.message);
+  }
+})();
+</script>
+</body>
+</html>

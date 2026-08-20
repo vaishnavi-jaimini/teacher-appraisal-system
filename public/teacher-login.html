@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Login — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap narrow">
+  <a class="back-link" href="/index.html">← Home</a>
+  <div class="card" style="margin-top:14px;">
+    <h1>Teacher Login</h1>
+    <p class="lede">Select your name and enter your PIN. First time logging in? Use the temporary setup code your principal gave you — you'll be asked to create your own permanent PIN right after.</p>
+    <div class="error-msg" id="err"></div>
+
+    <div class="field">
+      <label>Your name</label>
+      <select id="teacher-select"></select>
+    </div>
+    <div class="field">
+      <label>PIN / setup code</label>
+      <input type="password" id="pin" inputmode="numeric" maxlength="6" placeholder="4-6 digit PIN" />
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="login-btn">Log in</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+(async function () {
+  const select = document.getElementById("teacher-select");
+  const err = document.getElementById("err");
+  try {
+    const { teachers } = await api("/api/teachers/public");
+    if (!teachers.length) {
+      select.innerHTML = `<option value="">No teachers added yet</option>`;
+    } else {
+      select.innerHTML = teachers.map(t => `<option value="${t.id}">${escapeHtml(t.name)}${t.subject ? " — " + escapeHtml(t.subject) : ""}</option>`).join("");
+    }
+  } catch (e) {
+    showError(err, "Could not load teacher list.");
+  }
+
+  document.getElementById("login-btn").addEventListener("click", async () => {
+    hideError(err);
+    const teacherId = select.value;
+    const pin = document.getElementById("pin").value.trim();
+    if (!teacherId) return showError(err, "No teacher selected.");
+    if (!pin) return showError(err, "Enter your PIN.");
+    try {
+      const res = await api("/api/teacher/login", { method: "POST", body: JSON.stringify({ teacherId, pin }) });
+      window.location.href = res.mustSetPin ? "/teacher-pin.html" : "/teacher-dashboard.html";
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  document.getElementById("pin").addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("login-btn").click();
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Principal Dashboard — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h1>Principal Dashboard</h1>
+    <p class="lede">Add teachers, rate each one on the same 30 questions, and export a comparison of self-ratings vs. your ratings.</p>
+
+    <div class="btn-row">
+      <a class="btn" href="/api/export/xlsx">⬇ Download Excel (.xlsx) — all teachers</a>
+      <a class="btn secondary" href="/api/export/csv">⬇ Download CSV — full detail</a>
+      <a class="btn secondary" href="/api/export/summary.csv">⬇ Download CSV — summary</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Add a teacher</h2>
+    <div class="error-msg" id="add-err"></div>
+    <div id="pin-callout"></div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div class="field" style="flex:1; min-width:180px; margin-bottom:0;">
+        <label>Name</label>
+        <input type="text" id="new-name" placeholder="e.g. Asha Verma" />
+      </div>
+      <div class="field" style="flex:1; min-width:180px; margin-bottom:0;">
+        <label>Subject / Grade (optional)</label>
+        <input type="text" id="new-subject" placeholder="e.g. Grade 6 Science" />
+      </div>
+      <button class="btn" id="add-btn">Add teacher</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Teachers</h2>
+    <div id="teacher-list"></div>
+  </div>
+
+  <div class="card">
+    <h2>Principal account</h2>
+    <div class="error-msg" id="pw-err"></div>
+    <div class="success-msg" id="pw-success">Password updated.</div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>Current password</label>
+        <input type="password" id="cur-pw" />
+      </div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>New password</label>
+        <input type="password" id="new-pw" />
+      </div>
+      <button class="btn secondary" id="pw-btn">Update password</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+(async function () {
+  const session = await requireRole("principal");
+  if (!session) return;
+  await loadTeachers();
+
+  document.getElementById("add-btn").addEventListener("click", async () => {
+    const err = document.getElementById("add-err");
+    hideError(err);
+    document.getElementById("pin-callout").innerHTML = "";
+    const name = document.getElementById("new-name").value.trim();
+    const subject = document.getElementById("new-subject").value.trim();
+    if (!name) return showError(err, "Enter the teacher's name.");
+    try {
+      const res = await api("/api/principal/teachers", { method: "POST", body: JSON.stringify({ name, subject }) });
+      document.getElementById("new-name").value = "";
+      document.getElementById("new-subject").value = "";
+      document.getElementById("pin-callout").innerHTML =
+        `<div class="pin-callout">Teacher <strong>${escapeHtml(res.teacher.name)}</strong> added. Their temporary setup code is <span class="pin">${res.pin}</span> — write this down and give it to them now, it will not be shown again. They'll use it to log in once, then be asked to create their own permanent PIN (you can issue a new setup code later from the list below if needed).</div>`;
+      await loadTeachers();
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  document.getElementById("pw-btn").addEventListener("click", async () => {
+    const err = document.getElementById("pw-err");
+    const success = document.getElementById("pw-success");
+    hideError(err); success.classList.remove("show");
+    const currentPassword = document.getElementById("cur-pw").value;
+    const newPassword = document.getElementById("new-pw").value;
+    try {
+      await api("/api/principal/change-password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
+      success.classList.add("show");
+      document.getElementById("cur-pw").value = "";
+      document.getElementById("new-pw").value = "";
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  async function loadTeachers() {
+    const { teachers } = await api("/api/principal/teachers");
+    const host = document.getElementById("teacher-list");
+    if (!teachers.length) {
+      host.innerHTML = `<div class="empty-state">No teachers added yet. Add one above to get started.</div>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>Name</th><th>Subject</th><th>Self-Appraisal</th><th>Principal Rating</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${teachers.map(t => `
+            <tr>
+              <td>${escapeHtml(t.name)}${t.pinIsTemporary ? `<br/><span class="badge pending" style="margin-top:4px;">Awaiting PIN setup</span>` : ""}</td>
+              <td>${escapeHtml(t.subject || "—")}</td>
+              <td>${t.selfDone ? `<span class="badge done">Submitted</span>` : `<span class="badge pending">Pending</span>`}</td>
+              <td>${t.principalDone ? `<span class="badge done">Submitted</span>` : `<span class="badge pending">Pending</span>`}</td>
+              <td style="white-space:nowrap;">
+                <a class="btn small orange" href="/principal-rate.html?teacherId=${t.id}">${t.principalDone ? "Edit rating" : "Rate teacher"}</a>
+                ${t.selfDone && t.principalDone ? `<a class="btn small secondary" href="/comparison.html?teacherId=${t.id}">Compare</a>` : ""}
+                <button class="btn small secondary" data-reset="${t.id}" data-name="${escapeHtml(t.name)}">New setup code</button>
+                <button class="btn small danger" data-remove="${t.id}" data-name="${escapeHtml(t.name)}">Remove</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      </div>
+    `;
+
+    host.querySelectorAll("[data-reset]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.reset;
+        const res = await api(`/api/principal/teachers/${id}/reset-pin`, { method: "POST" });
+        document.getElementById("pin-callout").innerHTML =
+          `<div class="pin-callout">New temporary setup code for <strong>${escapeHtml(btn.dataset.name)}</strong>: <span class="pin">${res.pin}</span> — they'll be asked to create a new permanent PIN the next time they log in.</div>`;
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    });
+
+    host.querySelectorAll("[data-remove]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm(`Remove ${btn.dataset.name} and all their appraisal data? This cannot be undone.`)) return;
+        await api(`/api/principal/teachers/${btn.dataset.remove}`, { method: "DELETE" });
+        await loadTeachers();
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>

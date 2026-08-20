@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rate Teacher — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <a class="back-link" href="/principal-dashboard.html">← Back to dashboard</a>
+  <div class="card" style="margin-top:14px;">
+    <h1 id="title">Rate Teacher</h1>
+    <p class="lede">Rate this teacher on all 30 questions using the 1–5 scale. Self-ratings are intentionally hidden here so your assessment stays independent — you'll see both side by side in the comparison view once both are submitted.</p>
+    <div class="success-msg" id="success">Saved! Your rating for this teacher has been recorded.</div>
+    <div class="error-msg" id="err"></div>
+    <div id="note"></div>
+    <div id="form-host"></div>
+    <div class="btn-row">
+      <button class="btn orange" id="save-btn">Save rating</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script src="/js/rating-form.js"></script>
+<script>
+(async function () {
+  const session = await requireRole("principal");
+  if (!session) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const teacherId = params.get("teacherId");
+  const err = document.getElementById("err");
+  const success = document.getElementById("success");
+  if (!teacherId) { showError(err, "No teacher specified."); return; }
+
+  let form;
+  try {
+    const [{ questions, categories, scale }, data] = await Promise.all([
+      api("/api/questions"),
+      api(`/api/principal/rating/${teacherId}`)
+    ]);
+
+    document.getElementById("title").textContent = `Rate: ${data.teacher.name}`;
+    document.getElementById("note").innerHTML = data.selfSubmitted
+      ? `<div class="pin-callout">This teacher has completed their self-appraisal (scores hidden until you submit yours).</div>`
+      : `<div class="pin-callout">This teacher has not submitted a self-appraisal yet — you can still rate them now.</div>`;
+
+    form = buildRatingForm(document.getElementById("form-host"), {
+      questions, categories, scale,
+      variant: "principal",
+      existingRatings: data.principalRating ? data.principalRating.ratings : null,
+      existingComments: data.principalRating ? data.principalRating.comments : ""
+    });
+  } catch (e) {
+    showError(err, e.message);
+    return;
+  }
+
+  document.getElementById("save-btn").addEventListener("click", async () => {
+    hideError(err);
+    success.classList.remove("show");
+    if (!form.isComplete()) return showError(err, "Please answer all 30 questions before saving.");
+    try {
+      await api(`/api/principal/rating/${teacherId}`, {
+        method: "POST",
+        body: JSON.stringify({ ratings: form.getRatings(), comments: form.getComments() })
+      });
+      success.classList.add("show");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <div class="card" style="text-align:center; padding: 40px 24px;">
+    <h1>Teacher Appraisal System</h1>
+    <p class="lede">30 standard appraisal questions. Teachers rate themselves, the principal rates each teacher on the same questions, then the two sets of scores are compared and can be exported to CSV / Excel.</p>
+
+    <div class="role-grid">
+      <a class="role-card" href="/teacher-login.html">
+        <span class="icon">🍎</span>
+        <h3>I'm a Teacher</h3>
+        <p>Log in with your name and PIN to complete your self-appraisal.</p>
+      </a>
+      <a class="role-card" href="/principal-login.html">
+        <span class="icon">🗝️</span>
+        <h3>I'm the Principal</h3>
+        <p>Log in to manage teachers, rate them, and export comparison reports.</p>
+      </a>
+    </div>
+  </div>
+</div>
+
+<footer class="foot">Runs locally on your school network — no internet connection required.</footer>
+
+<script src="/js/common.js"></script>
+<script>
+  api("/api/session").then(renderTopbar).catch(() => {});
+</script>
+</body>
+</html>

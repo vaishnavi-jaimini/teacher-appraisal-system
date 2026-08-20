@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Set PIN — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap narrow">
+  <div class="card" style="margin-top:14px;">
+    <h1 id="title">Set Your PIN</h1>
+    <p class="lede" id="lede">Choose a 4-6 digit PIN you'll use to log in from now on.</p>
+    <div class="success-msg" id="success">PIN saved.</div>
+    <div class="error-msg" id="err"></div>
+
+    <div class="field" id="current-pin-field" style="display:none;">
+      <label>Current PIN</label>
+      <input type="password" id="current-pin" inputmode="numeric" maxlength="6" />
+    </div>
+    <div class="field">
+      <label>New PIN (4-6 digits)</label>
+      <input type="password" id="new-pin" inputmode="numeric" maxlength="6" />
+    </div>
+    <div class="field">
+      <label>Confirm new PIN</label>
+      <input type="password" id="confirm-pin" inputmode="numeric" maxlength="6" />
+    </div>
+    <div class="btn-row">
+      <button class="btn" id="save-btn">Save PIN</button>
+      <a class="btn secondary" href="/teacher-dashboard.html" id="skip-link" style="display:none;">Cancel</a>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+(async function () {
+  const session = await requireRole("teacher");
+  if (!session) return;
+
+  const err = document.getElementById("err");
+  const success = document.getElementById("success");
+  let mustSetPin = false;
+
+  try {
+    const me = await api("/api/teacher/me");
+    mustSetPin = me.mustSetPin;
+    if (mustSetPin) {
+      document.getElementById("title").textContent = `Welcome, ${me.teacher.name} — Create Your PIN`;
+      document.getElementById("lede").textContent =
+        "This is your first login. Choose a permanent 4-6 digit PIN to replace the temporary setup code — you'll use this to log in every time from now on.";
+    } else {
+      document.getElementById("title").textContent = "Change Your PIN";
+      document.getElementById("current-pin-field").style.display = "block";
+      document.getElementById("skip-link").style.display = "inline-flex";
+    }
+  } catch (e) {
+    showError(err, e.message);
+  }
+
+  document.getElementById("save-btn").addEventListener("click", async () => {
+    hideError(err);
+    success.classList.remove("show");
+    const currentPin = document.getElementById("current-pin").value.trim();
+    const newPin = document.getElementById("new-pin").value.trim();
+    const confirmPin = document.getElementById("confirm-pin").value.trim();
+
+    if (!/^\d{4,6}$/.test(newPin)) return showError(err, "New PIN must be 4-6 digits.");
+    if (newPin !== confirmPin) return showError(err, "PINs do not match.");
+    if (!mustSetPin && !currentPin) return showError(err, "Enter your current PIN.");
+
+    try {
+      await api("/api/teacher/change-pin", { method: "POST", body: JSON.stringify({ currentPin, newPin }) });
+      success.classList.add("show");
+      setTimeout(() => { window.location.href = "/teacher-dashboard.html"; }, 900);
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+})();
+</script>
+</body>
+</html>

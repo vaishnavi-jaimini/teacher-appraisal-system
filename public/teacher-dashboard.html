@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>My Self-Appraisal — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h1 id="title">My Self-Appraisal</h1>
+    <p class="lede">Rate yourself honestly on all 30 questions using the 1–5 scale. You can update your answers any time before you finish — later submissions overwrite earlier ones. <a href="/teacher-pin.html">Change my PIN</a></p>
+    <div class="success-msg" id="success">Saved! Your self-appraisal has been recorded.</div>
+    <div class="error-msg" id="err"></div>
+    <div id="comparison-link"></div>
+    <div id="form-host"></div>
+    <div class="btn-row">
+      <button class="btn" id="save-btn">Save my self-appraisal</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script src="/js/rating-form.js"></script>
+<script>
+(async function () {
+  const session = await requireRole("teacher");
+  if (!session) return;
+
+  const err = document.getElementById("err");
+  const success = document.getElementById("success");
+  let form;
+
+  try {
+    const [{ questions, categories, scale }, me] = await Promise.all([
+      api("/api/questions"),
+      api("/api/teacher/me")
+    ]);
+
+    if (me.mustSetPin) {
+      window.location.href = "/teacher-pin.html";
+      return;
+    }
+
+    document.getElementById("title").textContent = `My Self-Appraisal — ${me.teacher.name}`;
+
+    if (me.principalDone) {
+      document.getElementById("comparison-link").innerHTML =
+        `<div class="pin-callout">Your principal has completed your appraisal review. <a href="/comparison.html?teacherId=${me.teacher.id}">View your comparison results →</a></div>`;
+    }
+
+    form = buildRatingForm(document.getElementById("form-host"), {
+      questions, categories, scale,
+      variant: "self",
+      existingRatings: me.selfRating ? me.selfRating.ratings : null,
+      existingComments: me.selfRating ? me.selfRating.comments : ""
+    });
+  } catch (e) {
+    showError(err, e.message);
+  }
+
+  document.getElementById("save-btn").addEventListener("click", async () => {
+    hideError(err);
+    success.classList.remove("show");
+    if (!form.isComplete()) {
+      return showError(err, "Please answer all 30 questions before saving.");
+    }
+    try {
+      await api("/api/teacher/self-rating", {
+        method: "POST",
+        body: JSON.stringify({ ratings: form.getRatings(), comments: form.getComments() })
+      });
+      success.classList.add("show");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+})();
+</script>
+</body>
+</html>

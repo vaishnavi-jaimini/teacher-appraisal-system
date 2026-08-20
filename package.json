@@ -1,0 +1,14 @@
+{
+  "name": "teacher-appraisal-system",
+  "version": "1.0.0",
+  "description": "Teacher self-appraisal + principal appraisal system with CSV/Excel comparison export",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "express": "^4.19.2",
+    "xlsx": "^0.18.5"
+  }
+}
