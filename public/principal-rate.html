@@ -16,7 +16,7 @@
   <a class="back-link" href="/principal-dashboard.html">← Back to dashboard</a>
   <div class="card" style="margin-top:14px;">
     <h1 id="title">Rate Teacher</h1>
-    <p class="lede">Rate this teacher on all 30 questions using the 1–5 scale. Self-ratings are intentionally hidden here so your assessment stays independent — you'll see both side by side in the comparison view once both are submitted.</p>
+    <p class="lede">Rate this teacher on every question using the 1–5 scale. Where she's already graded herself, her self-score is shown next to the question.</p>
     <div class="success-msg" id="success">Saved! Your rating for this teacher has been recorded.</div>
     <div class="error-msg" id="err"></div>
     <div id="note"></div>
@@ -49,14 +49,16 @@
 
     document.getElementById("title").textContent = `Rate: ${data.teacher.name}`;
     document.getElementById("note").innerHTML = data.selfSubmitted
-      ? `<div class="pin-callout">This teacher has completed their self-appraisal (scores hidden until you submit yours).</div>`
+      ? `<div class="pin-callout">This teacher has completed her self-appraisal — her scores are shown next to each question below.</div>`
       : `<div class="pin-callout">This teacher has not submitted a self-appraisal yet — you can still rate them now.</div>`;
 
     form = buildRatingForm(document.getElementById("form-host"), {
       questions, categories, scale,
       variant: "principal",
       existingRatings: data.principalRating ? data.principalRating.ratings : null,
-      existingComments: data.principalRating ? data.principalRating.comments : ""
+      existingComments: data.principalRating ? data.principalRating.comments : "",
+      referenceRatings: data.selfRating ? data.selfRating.ratings : null,
+      referenceLabel: "Self"
     });
   } catch (e) {
     showError(err, e.message);

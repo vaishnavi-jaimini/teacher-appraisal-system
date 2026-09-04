@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin Dashboard — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h1>Admin Dashboard</h1>
+    <p class="lede">Manage teacher accounts and appraisal questions, and export results. Grading itself is done by the principal, not here.</p>
+
+    <div class="btn-row">
+      <a class="btn" href="/api/export/xlsx">⬇ Download Excel (.xlsx) — all teachers</a>
+      <a class="btn secondary" href="/api/export/csv">⬇ Download CSV — full detail</a>
+      <a class="btn secondary" href="/api/export/summary.csv">⬇ Download CSV — summary</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Add a teacher</h2>
+    <p class="lede" style="margin-top:-6px;">Usually not needed — teachers create their own account the first time they log in. Use this only to pre-add someone; they'll set their own password when they register with the same name (or you can set one for them below).</p>
+    <div class="error-msg" id="add-err"></div>
+    <div id="add-callout"></div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>Name</label>
+        <input type="text" id="new-name" placeholder="e.g. Asha Verma" />
+      </div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>Department (optional)</label>
+        <input type="text" id="new-department" placeholder="e.g. Mathematics" />
+      </div>
+      <div class="field" style="min-width:150px; margin-bottom:0;">
+        <label>Section (optional)</label>
+        <select id="new-section">
+          <option value="">—</option>
+          <option value="Primary">Primary</option>
+          <option value="Pre-Primary">Pre-Primary</option>
+          <option value="Secondary">Secondary</option>
+        </select>
+      </div>
+      <button class="btn admin" id="add-btn">Add teacher</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Teachers</h2>
+    <p class="lede" style="margin-top:-6px;">Set or reset a teacher's password directly here if she's locked out.</p>
+    <div class="error-msg" id="t-err"></div>
+    <div id="t-callout"></div>
+    <div id="teacher-list"></div>
+  </div>
+
+  <div class="card">
+    <h2>Appraisal questions</h2>
+    <p class="lede" style="margin-top:-6px;">Questions are shown to teachers and to the principal in this exact wording. At least <strong id="min-q-count">30</strong> questions are required at all times.</p>
+    <div class="error-msg" id="q-err"></div>
+    <div id="q-callout"></div>
+    <div id="question-list"></div>
+    <h3 style="font-size:14px; margin:20px 0 10px;">Add a question</h3>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div class="field" style="flex:1; min-width:200px; margin-bottom:0;">
+        <label>Category</label>
+        <input type="text" id="new-q-category" placeholder="e.g. Classroom Management" />
+      </div>
+      <div class="field" style="flex:2; min-width:260px; margin-bottom:0;">
+        <label>Question text</label>
+        <input type="text" id="new-q-text" placeholder="e.g. Maintains discipline and a positive learning environment." />
+      </div>
+      <button class="btn admin" id="add-q-btn">Add question</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Principal account</h2>
+    <p class="lede" style="margin-top:-6px;">Reset the principal's password directly — no current password needed.</p>
+    <div class="error-msg" id="pp-err"></div>
+    <div class="success-msg" id="pp-success">Principal's password updated.</div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>New principal password</label>
+        <input type="password" id="pp-new" />
+      </div>
+      <button class="btn secondary" id="pp-btn">Reset principal's password</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Admin account</h2>
+    <div class="error-msg" id="pw-err"></div>
+    <div class="success-msg" id="pw-success">Password updated.</div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>Current password</label>
+        <input type="password" id="cur-pw" />
+      </div>
+      <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+        <label>New password</label>
+        <input type="password" id="new-pw" />
+      </div>
+      <button class="btn secondary" id="pw-btn">Update password</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+(async function () {
+  const session = await requireRole("admin");
+  if (!session) return;
+  await loadTeachers();
+  await loadQuestions();
+
+  document.getElementById("add-btn").addEventListener("click", async () => {
+    const err = document.getElementById("add-err");
+    hideError(err);
+    document.getElementById("add-callout").innerHTML = "";
+    const name = document.getElementById("new-name").value.trim();
+    const department = document.getElementById("new-department").value.trim();
+    const section = document.getElementById("new-section").value;
+    if (!name) return showError(err, "Enter the teacher's name.");
+    try {
+      const res = await api("/api/admin/teachers", { method: "POST", body: JSON.stringify({ name, department, section }) });
+      document.getElementById("new-name").value = "";
+      document.getElementById("new-department").value = "";
+      document.getElementById("new-section").value = "";
+      document.getElementById("add-callout").innerHTML =
+        `<div class="pin-callout">Teacher <strong>${escapeHtml(res.teacher.name)}</strong> added.</div>`;
+      await loadTeachers();
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  document.getElementById("add-q-btn").addEventListener("click", async () => {
+    const err = document.getElementById("q-err");
+    hideError(err);
+    document.getElementById("q-callout").innerHTML = "";
+    const category = document.getElementById("new-q-category").value.trim();
+    const text = document.getElementById("new-q-text").value.trim();
+    if (!category || !text) return showError(err, "Enter both a category and the question text.");
+    try {
+      await api("/api/admin/questions", { method: "POST", body: JSON.stringify({ category, text }) });
+      document.getElementById("new-q-category").value = "";
+      document.getElementById("new-q-text").value = "";
+      await loadQuestions();
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  document.getElementById("pp-btn").addEventListener("click", async () => {
+    const err = document.getElementById("pp-err");
+    const success = document.getElementById("pp-success");
+    hideError(err); success.classList.remove("show");
+    const newPassword = document.getElementById("pp-new").value;
+    try {
+      await api("/api/admin/principal-password", { method: "POST", body: JSON.stringify({ newPassword }) });
+      success.classList.add("show");
+      document.getElementById("pp-new").value = "";
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  document.getElementById("pw-btn").addEventListener("click", async () => {
+    const err = document.getElementById("pw-err");
+    const success = document.getElementById("pw-success");
+    hideError(err); success.classList.remove("show");
+    const currentPassword = document.getElementById("cur-pw").value;
+    const newPassword = document.getElementById("new-pw").value;
+    try {
+      await api("/api/admin/change-password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
+      success.classList.add("show");
+      document.getElementById("cur-pw").value = "";
+      document.getElementById("new-pw").value = "";
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+
+  async function loadTeachers() {
+    const { teachers } = await api("/api/teachers/list");
+    const host = document.getElementById("teacher-list");
+    if (!teachers.length) {
+      host.innerHTML = `<div class="empty-state">No teachers added yet. They'll appear here once they register, or add one above.</div>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>Name</th><th>Department</th><th>Section</th><th>Self-Graded</th><th>Principal Rating</th><th>Set password</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${teachers.map(t => `
+            <tr>
+              <td>${escapeHtml(t.name)}${t.registered ? "" : ` <span class="badge pending">Not registered</span>`}</td>
+              <td>${escapeHtml(t.department || "—")}</td>
+              <td>${escapeHtml(t.section || "—")}</td>
+              <td>${t.selfDone ? `<span class="badge done">Submitted</span>` : `<span class="badge pending">Pending</span>`}</td>
+              <td>${t.principalDone ? `<span class="badge done">Submitted</span>` : `<span class="badge pending">Pending</span>`}</td>
+              <td style="white-space:nowrap;">
+                <input type="password" class="t-pw" data-teacher="${t.id}" placeholder="New password" style="width:130px; display:inline-block;" />
+                <button class="btn small secondary" data-setpw="${t.id}">Set</button>
+              </td>
+              <td style="white-space:nowrap;">
+                ${t.selfDone && t.principalDone ? `<a class="btn small secondary" href="/comparison.html?teacherId=${t.id}">View result</a>` : ""}
+                <button class="btn small danger" data-remove="${t.id}" data-name="${escapeHtml(t.name)}">Remove</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      </div>
+    `;
+
+    host.querySelectorAll("[data-setpw]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const err = document.getElementById("t-err");
+        hideError(err);
+        document.getElementById("t-callout").innerHTML = "";
+        const input = host.querySelector(`.t-pw[data-teacher="${btn.dataset.setpw}"]`);
+        const newPassword = input.value;
+        if (!newPassword || newPassword.length < 4) return showError(err, "Password must be at least 4 characters.");
+        try {
+          const res = await api(`/api/admin/teachers/${btn.dataset.setpw}/set-password`, { method: "POST", body: JSON.stringify({ newPassword }) });
+          document.getElementById("t-callout").innerHTML = `<div class="pin-callout">Password set for <strong>${escapeHtml(res.teacher.name)}</strong>.</div>`;
+          input.value = "";
+          await loadTeachers();
+        } catch (e) {
+          showError(err, e.message);
+        }
+      });
+    });
+
+    host.querySelectorAll("[data-remove]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm(`Remove ${btn.dataset.name} and all their appraisal data? This cannot be undone.`)) return;
+        await api(`/api/admin/teachers/${btn.dataset.remove}`, { method: "DELETE" });
+        await loadTeachers();
+      });
+    });
+  }
+
+  async function loadQuestions() {
+    const { questions, minQuestions } = await api("/api/questions");
+    document.getElementById("min-q-count").textContent = minQuestions;
+    const host = document.getElementById("question-list");
+    const sorted = questions.slice().sort((a, b) => a.id - b.id);
+    host.innerHTML = `
+      <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>#</th><th>Category</th><th>Question</th><th></th></tr></thead>
+        <tbody>
+          ${sorted.map(q => `
+            <tr data-row="${q.id}">
+              <td>${q.id}</td>
+              <td><input type="text" class="q-category" value="${escapeHtml(q.category)}" style="min-width:160px;" /></td>
+              <td><input type="text" class="q-text" value="${escapeHtml(q.text)}" style="min-width:280px;" /></td>
+              <td style="white-space:nowrap;">
+                <button class="btn small secondary" data-save="${q.id}">Save</button>
+                <button class="btn small danger" data-delete="${q.id}">Delete</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      </div>
+      <p class="muted" style="font-size:12px; margin-top:8px;">Total questions: ${questions.length}</p>
+    `;
+
+    host.querySelectorAll("[data-save]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const err = document.getElementById("q-err");
+        hideError(err);
+        const row = host.querySelector(`tr[data-row="${btn.dataset.save}"]`);
+        const category = row.querySelector(".q-category").value.trim();
+        const text = row.querySelector(".q-text").value.trim();
+        if (!category || !text) return showError(err, "Category and question text can't be empty.");
+        try {
+          await api(`/api/admin/questions/${btn.dataset.save}`, { method: "PUT", body: JSON.stringify({ category, text }) });
+          document.getElementById("q-callout").innerHTML = `<div class="pin-callout">Question #${btn.dataset.save} updated.</div>`;
+        } catch (e) {
+          showError(err, e.message);
+        }
+      });
+    });
+
+    host.querySelectorAll("[data-delete]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const err = document.getElementById("q-err");
+        hideError(err);
+        if (!confirm("Delete this question? Any saved ratings for it will no longer be shown.")) return;
+        try {
+          await api(`/api/admin/questions/${btn.dataset.delete}`, { method: "DELETE" });
+          await loadQuestions();
+        } catch (e) {
+          showError(err, e.message);
+        }
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>

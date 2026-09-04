@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Comparison — Teacher Appraisal System</title>
+<title>Appraisal Result — Teacher Appraisal System</title>
 <link rel="stylesheet" href="/css/styles.css" />
 </head>
 <body>
@@ -16,9 +16,15 @@
   <a class="back-link" id="back-link" href="/index.html">← Back</a>
 
   <div class="card" style="margin-top:14px;">
-    <h1 id="title">Comparison</h1>
+    <h1 id="title">Appraisal Result</h1>
     <div class="error-msg" id="err"></div>
-    <div id="content"></div>
+    <div id="summary"></div>
+  </div>
+
+  <div class="card" id="detail-card" style="display:none;">
+    <h2>Question-by-question comparison</h2>
+    <p class="lede" style="margin-top:-6px;">Read-only. This shows what you graded yourself vs. what the principal graded you, question by question.</p>
+    <div id="detail-content"></div>
   </div>
 </div>
 
@@ -29,45 +35,114 @@
   const session = await api("/api/session");
   if (!session.role) { window.location.href = "/index.html"; return; }
   renderTopbar(session);
-  document.getElementById("back-link").href = session.role === "principal" ? "/principal-dashboard.html" : "/teacher-dashboard.html";
+  const backLinks = { principal: "/principal-dashboard.html", admin: "/admin-dashboard.html", teacher: "/teacher-dashboard.html" };
+  document.getElementById("back-link").href = backLinks[session.role] || "/index.html";
 
   const params = new URLSearchParams(window.location.search);
   const teacherId = params.get("teacherId");
   const err = document.getElementById("err");
   if (!teacherId) { showError(err, "No teacher specified."); return; }
 
+  let cmp;
   try {
-    const cmp = await api(`/api/comparison/${teacherId}`);
-    document.getElementById("title").textContent = `Comparison — ${cmp.teacher.name}`;
+    cmp = await api(`/api/comparison/${teacherId}`);
+  } catch (e) {
+    showError(err, e.message);
+    return;
+  }
 
-    const content = document.getElementById("content");
+  document.getElementById("title").textContent = `Appraisal Result — ${cmp.teacher.name}`;
+  const summary = document.getElementById("summary");
 
-    if (!cmp.self || !cmp.principal) {
-      content.innerHTML = `<div class="empty-state">
-        ${!cmp.self ? "Self-appraisal not yet submitted. " : ""}
-        ${!cmp.principal ? "Principal rating not yet submitted." : ""}
-        <br/>The comparison will appear here once both are complete.
-      </div>`;
+  if (!cmp.self || !cmp.principal) {
+    summary.innerHTML = `<div class="empty-state">
+      ${!cmp.self ? "Self-appraisal not yet submitted. " : ""}
+      ${!cmp.principal ? "Principal rating not yet submitted." : ""}
+      <br/>The result will appear here once both are complete.
+    </div>`;
+    return;
+  }
+
+  const gradeClass = {
+    "Outstanding": "grade-outstanding", "Excellent": "grade-excellent", "Very Good": "grade-verygood",
+    "Good": "grade-good", "Fair": "grade-fair"
+  }[cmp.overall.gradeLabel] || "grade-good";
+
+  summary.innerHTML = `
+    <div class="stat-row">
+      <div class="stat-tile"><div class="stat-label">Name</div><div class="stat-value" style="font-size:16px;">${escapeHtml(cmp.teacher.name)}</div></div>
+      <div class="stat-tile"><div class="stat-label">Department</div><div class="stat-value" style="font-size:16px;">${escapeHtml(cmp.teacher.department || "—")}</div></div>
+      <div class="stat-tile"><div class="stat-label">Section</div><div class="stat-value" style="font-size:16px;">${escapeHtml(cmp.teacher.section || "—")}</div></div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-tile"><div class="stat-label">Self-Rating Average</div><div class="stat-value self">${cmp.overall.self.toFixed(2)}</div></div>
+      <div class="stat-tile"><div class="stat-label">Principal Rating Average</div><div class="stat-value principal">${cmp.overall.principal.toFixed(2)}</div></div>
+    </div>
+
+    <div class="grade-banner ${gradeClass}">
+      <div class="grade-banner-label">Overall Grade</div>
+      <div class="grade-banner-value">${escapeHtml(cmp.overall.gradeLabel)}</div>
+    </div>
+
+    ${cmp.principal.comments ? `
+      <h2 style="margin-top:24px;">Principal's Remark</h2>
+      <p class="secondary-text">${escapeHtml(cmp.principal.comments)}</p>
+    ` : ""}
+
+    <div class="btn-row" style="margin-top:20px;">
+      <button class="btn secondary" id="detail-toggle-btn">View question-wise comparison</button>
+    </div>
+
+    <div id="ok-area" style="margin-top:20px;">
+      <button class="btn orange" id="ok-btn">OK</button>
+    </div>
+    <div id="download-area" style="display:none; margin-top:12px;">
+      <div class="pin-callout">Your appraisal is complete. You can download the official appraisal form below.</div>
+      <div class="btn-row">
+        <a class="btn" href="/api/export/pdf/${teacherId}">⬇ Download Appraisal Form (PDF)</a>
+        ${session.role === "principal" || session.role === "admin" ? `<a class="btn secondary" href="/api/export/csv/${teacherId}">⬇ Download this teacher's CSV</a>` : ""}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("ok-btn").addEventListener("click", () => {
+    document.getElementById("ok-area").style.display = "none";
+    document.getElementById("download-area").style.display = "";
+  });
+
+  document.getElementById("detail-toggle-btn").addEventListener("click", () => {
+    const card = document.getElementById("detail-card");
+    const showing = card.style.display !== "none";
+    if (showing) {
+      card.style.display = "none";
+      document.getElementById("detail-toggle-btn").textContent = "View question-wise comparison";
       return;
     }
+    renderDetail();
+    card.style.display = "";
+    document.getElementById("detail-toggle-btn").textContent = "Hide question-wise comparison";
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  function renderDetail() {
+    const host = document.getElementById("detail-content");
+    if (host.dataset.rendered) return;
+    host.dataset.rendered = "1";
 
     const gap = Math.round((cmp.overall.principal - cmp.overall.self) * 100) / 100;
     const gapText = gap > 0 ? `+${gap} (principal rated higher)` : gap < 0 ? `${gap} (principal rated lower)` : "0 (perfect agreement)";
 
-    content.innerHTML = `
+    host.innerHTML = `
       <div class="stat-row">
-        <div class="stat-tile"><div class="stat-label">Self-Rating Average</div><div class="stat-value self">${cmp.overall.self.toFixed(2)}</div></div>
-        <div class="stat-tile"><div class="stat-label">Principal Rating Average</div><div class="stat-value principal">${cmp.overall.principal.toFixed(2)}</div></div>
         <div class="stat-tile"><div class="stat-label">Overall Gap</div><div class="stat-value">${gapText}</div></div>
       </div>
-
       <div class="legend-row">
         <div class="legend-item"><span class="legend-swatch self"></span>Self-Rating</div>
         <div class="legend-item"><span class="legend-swatch principal"></span>Principal Rating</div>
       </div>
       <div id="chart-host"></div>
 
-      <h2 style="margin-top:28px;">All 30 questions</h2>
+      <h3 style="margin-top:24px; font-size:14px;">All questions</h3>
       <div class="table-wrap">
       <table class="data-table">
         <thead><tr>
@@ -89,20 +164,11 @@
       </table>
       </div>
 
-      ${cmp.self.comments ? `<h2 style="margin-top:24px;">Teacher's comments</h2><p class="secondary-text">${escapeHtml(cmp.self.comments)}</p>` : ""}
-      ${cmp.principal.comments ? `<h2 style="margin-top:24px;">Principal's comments</h2><p class="secondary-text">${escapeHtml(cmp.principal.comments)}</p>` : ""}
-
-      ${session.role === "principal" ? `
-        <div class="btn-row" style="margin-top:24px;">
-          <a class="btn" href="/api/export/csv/${teacherId}">⬇ Download this teacher's CSV</a>
-        </div>
-      ` : ""}
+      ${cmp.self.comments ? `<h3 style="margin-top:24px; font-size:14px;">Teacher's comments</h3><p class="secondary-text">${escapeHtml(cmp.self.comments)}</p>` : ""}
     `;
 
     renderComparisonChart(document.getElementById("chart-host"), cmp.categoryAverages);
     window.addEventListener("resize", () => renderComparisonChart(document.getElementById("chart-host"), cmp.categoryAverages));
-  } catch (e) {
-    showError(err, e.message);
   }
 })();
 </script>

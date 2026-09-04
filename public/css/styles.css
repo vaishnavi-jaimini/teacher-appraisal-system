@@ -16,6 +16,7 @@
 
   --series-self: #2a78d6;    /* categorical slot 1 - blue */
   --series-principal: #eb6834; /* categorical slot 2 - orange */
+  --admin: #6a4fb3;
 
   --good: #0ca30c;
   --warning: #fab219;
@@ -38,6 +39,7 @@
 
     --series-self: #3987e5;
     --series-principal: #d95926;
+    --admin: #9b85d9;
   }
 }
 :root[data-theme="dark"] {
@@ -54,6 +56,7 @@
 
   --series-self: #3987e5;
   --series-principal: #d95926;
+  --admin: #9b85d9;
 }
 
 * { box-sizing: border-box; }
@@ -159,6 +162,7 @@ textarea { min-height: 70px; resize: vertical; }
 }
 
 .btn.orange { background: var(--series-principal); }
+.btn.admin { background: var(--admin); }
 .btn.danger { background: var(--critical); }
 .btn.small { padding: 6px 12px; font-size: 13px; }
 
@@ -235,6 +239,19 @@ textarea { min-height: 70px; resize: vertical; }
 .question-row:last-child { border-bottom: none; }
 .question-text { font-size: 14px; flex: 1; }
 .question-num { color: var(--text-muted); font-weight: 600; margin-right: 6px; }
+
+.ref-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-left: 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--series-self) 16%, transparent);
+  color: var(--series-self);
+  white-space: nowrap;
+}
 
 .scale {
   display: flex;
@@ -351,3 +368,31 @@ a.back-link:hover { text-decoration: underline; }
 .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
 
 footer.foot { text-align: center; color: var(--text-muted); font-size: 12px; padding: 20px; }
+
+/* Landing page hero */
+.hero-card { text-align: center; padding: 44px 24px; }
+.hero-logo { width: 92px; height: auto; margin-bottom: 16px; }
+.hero-card h1 { font-size: 24px; }
+.hero-subtitle { font-size: 16px; color: var(--text-secondary); font-weight: 600; margin: 4px 0 14px; }
+.hero-card .lede { max-width: 560px; margin-left: auto; margin-right: auto; }
+
+/* Overall grade banner */
+.grade-banner {
+  margin-top: 20px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  text-align: center;
+  border: 1px solid var(--border);
+}
+.grade-banner-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-bottom: 4px; }
+.grade-banner-value { font-size: 26px; font-weight: 800; }
+.grade-outstanding { background: color-mix(in srgb, var(--good) 14%, transparent); }
+.grade-outstanding .grade-banner-value { color: var(--good); }
+.grade-excellent { background: color-mix(in srgb, var(--series-self) 12%, transparent); }
+.grade-excellent .grade-banner-value { color: var(--series-self); }
+.grade-verygood { background: color-mix(in srgb, var(--series-self) 8%, transparent); }
+.grade-verygood .grade-banner-value { color: var(--text-primary); }
+.grade-good { background: color-mix(in srgb, var(--warning) 14%, transparent); }
+.grade-good .grade-banner-value { color: #8a6300; }
+.grade-fair { background: color-mix(in srgb, var(--serious) 14%, transparent); }
+.grade-fair .grade-banner-value { color: var(--critical); }

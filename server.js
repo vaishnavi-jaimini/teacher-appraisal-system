@@ -1,10 +1,12 @@
 const express = require("express");
 const crypto = require("crypto");
 const path = require("path");
+const fs = require("fs");
 const XLSX = require("xlsx");
+const PDFDocument = require("pdfkit");
 
-const { QUESTIONS, CATEGORIES, RATING_SCALE } = require("./data/questions");
 const store = require("./data/store");
+const mailer = require("./lib/mailer");
 
 const db = store.load();
 const app = express();
@@ -13,6 +15,9 @@ app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 3000;
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const LOGO_PATH = path.join(__dirname, "public", "images", "dpsv-logo.png");
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ---------------------------------------------------------------------------
 // Tiny in-memory session store + manual cookie handling (avoids pulling in
@@ -73,6 +78,26 @@ function requirePrincipal(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  const session = getSession(req);
+  if (!session || session.role !== "admin") {
+    return res.status(401).json({ error: "Admin login required." });
+  }
+  req.session = session;
+  next();
+}
+
+// Admin manages teachers/questions; the principal only grades and views
+// results, so most read/export endpoints are open to either.
+function requirePrincipalOrAdmin(req, res, next) {
+  const session = getSession(req);
+  if (!session || (session.role !== "principal" && session.role !== "admin")) {
+    return res.status(401).json({ error: "Principal or admin login required." });
+  }
+  req.session = session;
+  next();
+}
+
 function requireTeacher(req, res, next) {
   const session = getSession(req);
   if (!session || session.role !== "teacher") {
@@ -87,13 +112,13 @@ function requireTeacher(req, res, next) {
   next();
 }
 
-// Either the principal, or the teacher viewing their own record.
-function requirePrincipalOrOwnTeacher(paramName) {
+// The principal, the admin, or the teacher viewing their own record.
+function requirePrincipalOrAdminOrOwnTeacher(paramName) {
   return (req, res, next) => {
     const session = getSession(req);
     if (!session) return res.status(401).json({ error: "Login required." });
     const teacherId = req.params[paramName];
-    if (session.role === "principal") {
+    if (session.role === "principal" || session.role === "admin") {
       req.session = session;
       return next();
     }
@@ -109,7 +134,15 @@ function requirePrincipalOrOwnTeacher(paramName) {
 // Helpers
 // ---------------------------------------------------------------------------
 function publicTeacher(t) {
-  return { id: t.id, name: t.name, subject: t.subject || "" };
+  return {
+    id: t.id,
+    name: t.name,
+    department: t.department || "",
+    section: t.section || "",
+    email: t.email || "",
+    yearOfJoining: t.yearOfJoining || null,
+    registered: !!t.passwordHash
+  };
 }
 
 function teacherWithStatus(t) {
@@ -118,9 +151,26 @@ function teacherWithStatus(t) {
     selfDone: !!db.selfRatings[t.id],
     principalDone: !!db.principalRatings[t.id],
     selfSubmittedAt: db.selfRatings[t.id] ? db.selfRatings[t.id].submittedAt : null,
-    principalSubmittedAt: db.principalRatings[t.id] ? db.principalRatings[t.id].submittedAt : null,
-    pinIsTemporary: !!t.pinIsTemporary
+    principalSubmittedAt: db.principalRatings[t.id] ? db.principalRatings[t.id].submittedAt : null
   };
+}
+
+function findTeacherByName(name) {
+  const normalized = name.trim().toLowerCase();
+  return db.teachers.find(t => t.name.trim().toLowerCase() === normalized);
+}
+
+function findTeacherByEmail(email) {
+  const normalized = email.trim().toLowerCase();
+  return db.teachers.find(t => (t.email || "").trim().toLowerCase() === normalized);
+}
+
+function sortedQuestions() {
+  return db.questions.slice().sort((a, b) => a.id - b.id);
+}
+
+function categoriesOf(questions) {
+  return [...new Set(questions.map(q => q.category))];
 }
 
 function average(arr) {
@@ -130,28 +180,48 @@ function average(arr) {
 }
 
 function validateRatings(ratings) {
-  if (!Array.isArray(ratings) || ratings.length !== QUESTIONS.length) return false;
-  return ratings.every(r => Number.isInteger(r) && r >= 1 && r <= 5);
+  if (!ratings || typeof ratings !== "object" || Array.isArray(ratings)) return false;
+  return db.questions.every(q => {
+    const v = ratings[q.id];
+    return Number.isInteger(v) && v >= 1 && v <= 5;
+  });
+}
+
+// Bands are applied to the principal's average score, since the principal's
+// assessment is the one that determines the teacher's official grade.
+function gradeLabel(avg) {
+  if (avg == null) return null;
+  if (avg >= 4.5) return "Outstanding";
+  if (avg >= 4.0) return "Excellent";
+  if (avg >= 3.5) return "Very Good";
+  if (avg >= 3.0) return "Good";
+  return "Fair";
+}
+
+function genOtp() {
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 function buildComparison(teacher) {
   const self = db.selfRatings[teacher.id] || null;
   const principal = db.principalRatings[teacher.id] || null;
+  const questions = sortedQuestions();
+  const categories = categoriesOf(questions);
 
-  const rows = QUESTIONS.map((q, i) => {
-    const selfScore = self ? self.ratings[i] : null;
-    const principalScore = principal ? principal.ratings[i] : null;
+  const rows = questions.map(q => {
+    const selfScore = self ? self.ratings[q.id] : null;
+    const principalScore = principal ? principal.ratings[q.id] : null;
     return {
       id: q.id,
       category: q.category,
       text: q.text,
-      self: selfScore,
-      principal: principalScore,
+      self: selfScore != null ? selfScore : null,
+      principal: principalScore != null ? principalScore : null,
       gap: selfScore != null && principalScore != null ? principalScore - selfScore : null
     };
   });
 
-  const categoryAverages = CATEGORIES.map(cat => {
+  const categoryAverages = categories.map(cat => {
     const catRows = rows.filter(r => r.category === cat);
     return {
       category: cat,
@@ -160,6 +230,9 @@ function buildComparison(teacher) {
     };
   });
 
+  const overallSelf = self ? average(rows.map(r => r.self).filter(v => v != null)) : null;
+  const overallPrincipal = principal ? average(rows.map(r => r.principal).filter(v => v != null)) : null;
+
   return {
     teacher: publicTeacher(teacher),
     self: self && { comments: self.comments || "", submittedAt: self.submittedAt },
@@ -167,8 +240,9 @@ function buildComparison(teacher) {
     rows,
     categoryAverages,
     overall: {
-      self: self ? average(self.ratings) : null,
-      principal: principal ? average(principal.ratings) : null
+      self: overallSelf,
+      principal: overallPrincipal,
+      gradeLabel: gradeLabel(overallPrincipal)
     }
   };
 }
@@ -187,7 +261,7 @@ function toCsv(rows) {
 
 function ratingLabel(v) {
   if (v == null) return "";
-  const found = RATING_SCALE.find(r => r.value === v);
+  const found = store.RATING_SCALE.find(r => r.value === v);
   return found ? found.label : String(v);
 }
 
@@ -207,17 +281,15 @@ function safeSheetName(name, used) {
 // Public / shared routes
 // ---------------------------------------------------------------------------
 app.get("/api/questions", (req, res) => {
-  res.json({ questions: QUESTIONS, categories: CATEGORIES, scale: RATING_SCALE });
-});
-
-app.get("/api/teachers/public", (req, res) => {
-  res.json({ teachers: db.teachers.map(publicTeacher) });
+  const questions = sortedQuestions();
+  res.json({ questions, categories: categoriesOf(questions), scale: store.RATING_SCALE, minQuestions: store.MIN_QUESTIONS });
 });
 
 app.get("/api/session", (req, res) => {
   const session = getSession(req);
   if (!session) return res.json({ role: null });
   if (session.role === "principal") return res.json({ role: "principal" });
+  if (session.role === "admin") return res.json({ role: "admin" });
   const teacher = db.teachers.find(t => t.id === session.teacherId);
   if (!teacher) return res.json({ role: null });
   res.json({ role: "teacher", teacher: publicTeacher(teacher) });
@@ -231,7 +303,8 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Principal auth
+// Principal auth — principal only grades teachers and views results; she
+// cannot add/remove teachers or edit questions (that's the admin's job).
 // ---------------------------------------------------------------------------
 app.post("/api/principal/login", (req, res) => {
   const { password } = req.body || {};
@@ -259,80 +332,266 @@ app.post("/api/principal/change-password", requirePrincipal, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Teacher management (principal only)
+// Admin auth — the admin manages the teacher roster and the question bank;
+// this is a separate role from the principal (who only grades teachers).
 // ---------------------------------------------------------------------------
-app.get("/api/principal/teachers", requirePrincipal, (req, res) => {
-  res.json({ teachers: db.teachers.map(teacherWithStatus) });
+app.post("/api/admin/login", (req, res) => {
+  const { password } = req.body || {};
+  if (!password || !store.verifySecret(password, db.config.adminPasswordHash, db.config.adminPasswordSalt)) {
+    return res.status(401).json({ error: "Incorrect admin password." });
+  }
+  const token = createSession({ role: "admin" });
+  setSessionCookie(res, token);
+  res.json({ ok: true });
 });
 
-function randomPin() {
-  return String(crypto.randomInt(0, 10000)).padStart(4, "0");
-}
-
-app.post("/api/principal/teachers", requirePrincipal, (req, res) => {
-  const { name, subject } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: "Teacher name is required." });
-  const pin = randomPin();
-  const { hash, salt } = store.hashSecret(pin);
-  const teacher = {
-    id: crypto.randomUUID(),
-    name: name.trim(),
-    subject: (subject || "").trim(),
-    pinHash: hash,
-    pinSalt: salt,
-    pinIsTemporary: true, // teacher must choose her own permanent PIN on first login
-    createdAt: new Date().toISOString()
-  };
-  db.teachers.push(teacher);
+app.post("/api/admin/change-password", requireAdmin, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!store.verifySecret(currentPassword, db.config.adminPasswordHash, db.config.adminPasswordSalt)) {
+    return res.status(401).json({ error: "Current password is incorrect." });
+  }
+  if (!newPassword || String(newPassword).length < 4) {
+    return res.status(400).json({ error: "New password must be at least 4 characters." });
+  }
+  const { hash, salt } = store.hashSecret(newPassword);
+  db.config.adminPasswordHash = hash;
+  db.config.adminPasswordSalt = salt;
   store.save();
-  // The code is only ever returned once, at creation time, so the principal can hand it to the teacher.
-  res.json({ teacher: teacherWithStatus(teacher), pin });
+  res.json({ ok: true });
 });
 
-app.put("/api/principal/teachers/:id", requirePrincipal, (req, res) => {
-  const teacher = db.teachers.find(t => t.id === req.params.id);
-  if (!teacher) return res.status(404).json({ error: "Teacher not found." });
-  const { name, subject } = req.body || {};
-  if (name && name.trim()) teacher.name = name.trim();
-  if (subject !== undefined) teacher.subject = subject.trim();
-  store.save();
-  res.json({ teacher: teacherWithStatus(teacher) });
-});
-
-app.post("/api/principal/teachers/:id/reset-pin", requirePrincipal, (req, res) => {
-  const teacher = db.teachers.find(t => t.id === req.params.id);
-  if (!teacher) return res.status(404).json({ error: "Teacher not found." });
-  const pin = randomPin();
-  const { hash, salt } = store.hashSecret(pin);
-  teacher.pinHash = hash;
-  teacher.pinSalt = salt;
-  teacher.pinIsTemporary = true; // she'll be asked to choose a new permanent PIN on next login
-  store.save();
-  res.json({ ok: true, pin });
-});
-
-app.delete("/api/principal/teachers/:id", requirePrincipal, (req, res) => {
-  const idx = db.teachers.findIndex(t => t.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: "Teacher not found." });
-  const [removed] = db.teachers.splice(idx, 1);
-  delete db.selfRatings[removed.id];
-  delete db.principalRatings[removed.id];
+// The admin can reset the principal's password directly (no current
+// password needed) in case the principal gets locked out.
+app.post("/api/admin/principal-password", requireAdmin, (req, res) => {
+  const { newPassword } = req.body || {};
+  if (!newPassword || String(newPassword).length < 4) {
+    return res.status(400).json({ error: "New password must be at least 4 characters." });
+  }
+  const { hash, salt } = store.hashSecret(newPassword);
+  db.config.principalPasswordHash = hash;
+  db.config.principalPasswordSalt = salt;
   store.save();
   res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
-// Teacher auth
+// Question bank (admin only editable; min 30 enforced)
 // ---------------------------------------------------------------------------
+app.post("/api/admin/questions", requireAdmin, (req, res) => {
+  const { category, text } = req.body || {};
+  if (!category || !category.trim()) return res.status(400).json({ error: "Category is required." });
+  if (!text || !text.trim()) return res.status(400).json({ error: "Question text is required." });
+  const question = { id: db.nextQuestionId++, category: category.trim(), text: text.trim() };
+  db.questions.push(question);
+  store.save();
+  res.json({ question, questions: sortedQuestions() });
+});
+
+app.put("/api/admin/questions/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const question = db.questions.find(q => q.id === id);
+  if (!question) return res.status(404).json({ error: "Question not found." });
+  const { category, text } = req.body || {};
+  if (category !== undefined) {
+    if (!category.trim()) return res.status(400).json({ error: "Category cannot be empty." });
+    question.category = category.trim();
+  }
+  if (text !== undefined) {
+    if (!text.trim()) return res.status(400).json({ error: "Question text cannot be empty." });
+    question.text = text.trim();
+  }
+  store.save();
+  res.json({ question, questions: sortedQuestions() });
+});
+
+app.delete("/api/admin/questions/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (db.questions.length <= store.MIN_QUESTIONS) {
+    return res.status(400).json({ error: `At least ${store.MIN_QUESTIONS} questions are required — add a replacement before deleting this one.` });
+  }
+  const idx = db.questions.findIndex(q => q.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Question not found." });
+  db.questions.splice(idx, 1);
+  store.save();
+  res.json({ questions: sortedQuestions() });
+});
+
+// ---------------------------------------------------------------------------
+// Teacher roster — read-only list for principal/admin (principal needs it to
+// pick who to grade; admin needs it to manage the roster). Add/edit/remove
+// and password resets are admin-only.
+// ---------------------------------------------------------------------------
+app.get("/api/teachers/list", requirePrincipalOrAdmin, (req, res) => {
+  const teachers = db.teachers.slice().sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ teachers: teachers.map(teacherWithStatus) });
+});
+
+app.post("/api/admin/teachers", requireAdmin, (req, res) => {
+  const { name, department, section, email, yearOfJoining } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: "Teacher name is required." });
+  if (findTeacherByName(name)) return res.status(400).json({ error: "A teacher with that name already exists." });
+  if (section && !store.SECTIONS.includes(section)) return res.status(400).json({ error: "Invalid section." });
+  const teacher = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    department: (department || "").trim(),
+    section: section || "",
+    email: (email || "").trim(),
+    yearOfJoining: yearOfJoining ? Number(yearOfJoining) : null,
+    passwordHash: null,
+    passwordSalt: null,
+    createdAt: new Date().toISOString()
+  };
+  db.teachers.push(teacher);
+  store.save();
+  res.json({ teacher: teacherWithStatus(teacher) });
+});
+
+app.put("/api/admin/teachers/:id", requireAdmin, (req, res) => {
+  const teacher = db.teachers.find(t => t.id === req.params.id);
+  if (!teacher) return res.status(404).json({ error: "Teacher not found." });
+  const { name, department, section, email, yearOfJoining } = req.body || {};
+  if (name && name.trim()) teacher.name = name.trim();
+  if (department !== undefined) teacher.department = department.trim();
+  if (section !== undefined) {
+    if (section && !store.SECTIONS.includes(section)) return res.status(400).json({ error: "Invalid section." });
+    teacher.section = section;
+  }
+  if (email !== undefined) teacher.email = email.trim();
+  if (yearOfJoining !== undefined) teacher.yearOfJoining = yearOfJoining ? Number(yearOfJoining) : null;
+  store.save();
+  res.json({ teacher: teacherWithStatus(teacher) });
+});
+
+app.delete("/api/admin/teachers/:id", requireAdmin, (req, res) => {
+  const idx = db.teachers.findIndex(t => t.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Teacher not found." });
+  const [removed] = db.teachers.splice(idx, 1);
+  delete db.selfRatings[removed.id];
+  delete db.principalRatings[removed.id];
+  delete db.passwordResets[removed.id];
+  store.save();
+  res.json({ ok: true });
+});
+
+// Lets the admin set a teacher's password directly (e.g. she's locked out
+// and doesn't have an email on file for OTP reset). Also "registers" a
+// pre-added teacher who hasn't set her own password yet.
+app.post("/api/admin/teachers/:id/set-password", requireAdmin, (req, res) => {
+  const teacher = db.teachers.find(t => t.id === req.params.id);
+  if (!teacher) return res.status(404).json({ error: "Teacher not found." });
+  const { newPassword } = req.body || {};
+  if (!newPassword || String(newPassword).length < 4) {
+    return res.status(400).json({ error: "New password must be at least 4 characters." });
+  }
+  const { hash, salt } = store.hashSecret(newPassword);
+  teacher.passwordHash = hash;
+  teacher.passwordSalt = salt;
+  delete db.passwordResets[teacher.id];
+  store.save();
+  res.json({ teacher: teacherWithStatus(teacher) });
+});
+
+// ---------------------------------------------------------------------------
+// Teacher auth — registration, login, OTP-based password reset.
+// ---------------------------------------------------------------------------
+app.post("/api/teacher/register", (req, res) => {
+  const { name, password, department, section, email, yearOfJoining } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: "Enter your name." });
+  if (!password || String(password).length < 4) return res.status(400).json({ error: "Password must be at least 4 characters." });
+  if (!store.SECTIONS.includes(section)) return res.status(400).json({ error: "Choose a valid section." });
+  const currentYear = new Date().getFullYear();
+  const yoj = Number(yearOfJoining);
+  if (!Number.isInteger(yoj) || yoj < 1960 || yoj > currentYear + 1) {
+    return res.status(400).json({ error: "Enter a valid year of joining." });
+  }
+  if (email && email.trim() && !EMAIL_RE.test(email.trim())) {
+    return res.status(400).json({ error: "Enter a valid email address, or leave it blank." });
+  }
+
+  let teacher = findTeacherByName(name);
+  if (teacher && teacher.passwordHash) {
+    return res.status(400).json({ error: "A teacher with that name is already registered. Please log in instead." });
+  }
+
+  const { hash, salt } = store.hashSecret(password);
+  if (teacher) {
+    // Claims a record the principal pre-added (or a legacy record from
+    // before password login existed) without losing its appraisal history.
+    teacher.department = (department || "").trim();
+    teacher.section = section;
+    teacher.email = (email || "").trim();
+    teacher.yearOfJoining = yoj;
+    teacher.passwordHash = hash;
+    teacher.passwordSalt = salt;
+  } else {
+    teacher = {
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      department: (department || "").trim(),
+      section,
+      email: (email || "").trim(),
+      yearOfJoining: yoj,
+      passwordHash: hash,
+      passwordSalt: salt,
+      createdAt: new Date().toISOString()
+    };
+    db.teachers.push(teacher);
+  }
+  store.save();
+
+  const token = createSession({ role: "teacher", teacherId: teacher.id });
+  setSessionCookie(res, token);
+  res.json({ ok: true, teacher: publicTeacher(teacher) });
+});
+
 app.post("/api/teacher/login", (req, res) => {
-  const { teacherId, pin } = req.body || {};
-  const teacher = db.teachers.find(t => t.id === teacherId);
-  if (!teacher || !pin || !store.verifySecret(pin, teacher.pinHash, teacher.pinSalt)) {
-    return res.status(401).json({ error: "Incorrect teacher / PIN combination." });
+  const { name, password } = req.body || {};
+  if (!name || !password) return res.status(400).json({ error: "Enter your name and password." });
+  const teacher = findTeacherByName(name);
+  if (!teacher || !teacher.passwordHash || !store.verifySecret(password, teacher.passwordHash, teacher.passwordSalt)) {
+    return res.status(401).json({ error: "Incorrect name or password." });
   }
   const token = createSession({ role: "teacher", teacherId: teacher.id });
   setSessionCookie(res, token);
-  res.json({ ok: true, teacher: publicTeacher(teacher), mustSetPin: !!teacher.pinIsTemporary });
+  res.json({ ok: true, teacher: publicTeacher(teacher) });
+});
+
+app.post("/api/teacher/forgot-password", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !email.trim()) return res.status(400).json({ error: "Enter your email." });
+  const teacher = findTeacherByEmail(email);
+  if (teacher && teacher.passwordHash) {
+    const otp = genOtp();
+    const { hash, salt } = store.hashSecret(otp);
+    db.passwordResets[teacher.id] = { hash, salt, expires: Date.now() + OTP_TTL_MS };
+    store.save();
+    try {
+      await mailer.sendOtpEmail(teacher.email, otp, teacher.name);
+    } catch (e) {
+      console.warn("Failed to send OTP email:", e.message);
+    }
+  }
+  // Same response whether or not the email matched, so this can't be used to
+  // discover which emails are registered.
+  res.json({ ok: true, message: "If that email is registered, a reset code has been sent (or logged on the server)." });
+});
+
+app.post("/api/teacher/reset-password", (req, res) => {
+  const { email, otp, newPassword } = req.body || {};
+  if (!email || !otp || !newPassword) return res.status(400).json({ error: "All fields are required." });
+  if (String(newPassword).length < 4) return res.status(400).json({ error: "New password must be at least 4 characters." });
+  const teacher = findTeacherByEmail(email);
+  const reset = teacher && db.passwordResets[teacher.id];
+  if (!teacher || !reset || reset.expires < Date.now() || !store.verifySecret(otp, reset.hash, reset.salt)) {
+    return res.status(400).json({ error: "That code is invalid or has expired. Request a new one." });
+  }
+  const { hash, salt } = store.hashSecret(newPassword);
+  teacher.passwordHash = hash;
+  teacher.passwordSalt = salt;
+  delete db.passwordResets[teacher.id];
+  store.save();
+  res.json({ ok: true });
 });
 
 app.get("/api/teacher/me", requireTeacher, (req, res) => {
@@ -341,42 +600,15 @@ app.get("/api/teacher/me", requireTeacher, (req, res) => {
   const self = db.selfRatings[teacher.id] || null;
   res.json({
     teacher: publicTeacher(teacher),
-    mustSetPin: !!teacher.pinIsTemporary,
     selfRating: self ? { ratings: self.ratings, comments: self.comments || "", submittedAt: self.submittedAt } : null,
     principalDone: !!db.principalRatings[teacher.id]
   });
 });
 
-// A teacher chooses her own permanent PIN, either as mandatory first-time
-// setup (replacing the principal's temporary code — no current PIN needed,
-// since the session itself already proves she just authenticated with it)
-// or as a voluntary later change (current PIN required).
-app.post("/api/teacher/change-pin", requireTeacher, (req, res) => {
-  const teacher = db.teachers.find(t => t.id === req.session.teacherId);
-  if (!teacher) return res.status(404).json({ error: "Teacher not found." });
-  const { currentPin, newPin } = req.body || {};
-
-  if (!teacher.pinIsTemporary) {
-    if (!currentPin || !store.verifySecret(currentPin, teacher.pinHash, teacher.pinSalt)) {
-      return res.status(401).json({ error: "Current PIN is incorrect." });
-    }
-  }
-  if (!newPin || !/^\d{4,6}$/.test(newPin)) {
-    return res.status(400).json({ error: "New PIN must be 4-6 digits." });
-  }
-
-  const { hash, salt } = store.hashSecret(newPin);
-  teacher.pinHash = hash;
-  teacher.pinSalt = salt;
-  teacher.pinIsTemporary = false;
-  store.save();
-  res.json({ ok: true });
-});
-
 app.post("/api/teacher/self-rating", requireTeacher, (req, res) => {
   const { ratings, comments } = req.body || {};
   if (!validateRatings(ratings)) {
-    return res.status(400).json({ error: `Expected ${QUESTIONS.length} ratings, each an integer from 1 to 5.` });
+    return res.status(400).json({ error: `Please answer every question (1 to 5) before saving.` });
   }
   db.selfRatings[req.session.teacherId] = {
     ratings,
@@ -394,12 +626,14 @@ app.get("/api/principal/rating/:teacherId", requirePrincipal, (req, res) => {
   const teacher = db.teachers.find(t => t.id === req.params.teacherId);
   if (!teacher) return res.status(404).json({ error: "Teacher not found." });
   const principal = db.principalRatings[teacher.id] || null;
+  const self = db.selfRatings[teacher.id] || null;
   res.json({
     teacher: publicTeacher(teacher),
     principalRating: principal
       ? { ratings: principal.ratings, comments: principal.comments || "", submittedAt: principal.submittedAt }
       : null,
-    selfSubmitted: !!db.selfRatings[teacher.id] // deliberately no scores here, to avoid biasing the principal's rating
+    selfSubmitted: !!self,
+    selfRating: self ? { ratings: self.ratings, comments: self.comments || "" } : null
   });
 });
 
@@ -408,7 +642,7 @@ app.post("/api/principal/rating/:teacherId", requirePrincipal, (req, res) => {
   if (!teacher) return res.status(404).json({ error: "Teacher not found." });
   const { ratings, comments } = req.body || {};
   if (!validateRatings(ratings)) {
-    return res.status(400).json({ error: `Expected ${QUESTIONS.length} ratings, each an integer from 1 to 5.` });
+    return res.status(400).json({ error: `Please answer every question (1 to 5) before saving.` });
   }
   db.principalRatings[teacher.id] = {
     ratings,
@@ -422,25 +656,91 @@ app.post("/api/principal/rating/:teacherId", requirePrincipal, (req, res) => {
 // ---------------------------------------------------------------------------
 // Comparison (principal, or the teacher viewing their own)
 // ---------------------------------------------------------------------------
-app.get("/api/comparison/:teacherId", requirePrincipalOrOwnTeacher("teacherId"), (req, res) => {
+app.get("/api/comparison/:teacherId", requirePrincipalOrAdminOrOwnTeacher("teacherId"), (req, res) => {
   const teacher = db.teachers.find(t => t.id === req.params.teacherId);
   if (!teacher) return res.status(404).json({ error: "Teacher not found." });
   res.json(buildComparison(teacher));
 });
 
 // ---------------------------------------------------------------------------
+// PDF appraisal form (principal, or the teacher viewing their own)
+// ---------------------------------------------------------------------------
+app.get("/api/export/pdf/:teacherId", requirePrincipalOrAdminOrOwnTeacher("teacherId"), (req, res) => {
+  const teacher = db.teachers.find(t => t.id === req.params.teacherId);
+  if (!teacher) return res.status(404).json({ error: "Teacher not found." });
+  const cmp = buildComparison(teacher);
+  if (!cmp.self || !cmp.principal) {
+    return res.status(400).json({ error: "Both the self-appraisal and the principal's rating must be submitted before the form can be downloaded." });
+  }
+
+  const filename = `${teacher.name.replace(/[^a-z0-9]+/gi, "_")}_appraisal_form.pdf`;
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+  const doc = new PDFDocument({ size: "A4", margin: 56 });
+  doc.pipe(res);
+
+  if (fs.existsSync(LOGO_PATH)) {
+    try {
+      const logoWidth = 64;
+      doc.image(LOGO_PATH, doc.page.width / 2 - logoWidth / 2, doc.y, { width: logoWidth });
+      doc.y += logoWidth + 12;
+    } catch (e) { /* skip logo if unreadable */ }
+  }
+
+  doc.font("Helvetica-Bold").fontSize(18).text(db.config.schoolName, { align: "center" });
+  doc.font("Helvetica-Bold").fontSize(14).text("Teacher Appraisal Form", { align: "center" });
+  doc.moveDown(1.2);
+  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#c3c2b7").stroke();
+  doc.moveDown(1);
+
+  function row(label, value) {
+    doc.font("Helvetica-Bold").fontSize(11).text(label, { continued: true });
+    doc.font("Helvetica").fontSize(11).text("  " + (value || "—"));
+    doc.moveDown(0.4);
+  }
+
+  row("Name:", teacher.name);
+  row("Department:", teacher.department);
+  row("Section:", teacher.section);
+  row("Year of Joining:", teacher.yearOfJoining ? String(teacher.yearOfJoining) : "");
+  doc.moveDown(0.6);
+
+  row("Self-Rating Average (out of 5):", cmp.overall.self != null ? cmp.overall.self.toFixed(2) : "");
+  row("Principal Rating Average (out of 5):", cmp.overall.principal != null ? cmp.overall.principal.toFixed(2) : "");
+  doc.moveDown(0.2);
+
+  doc.font("Helvetica-Bold").fontSize(13).fillColor("#075133").text("Overall Grade: " + (cmp.overall.gradeLabel || "—"));
+  doc.fillColor("#000000");
+  doc.moveDown(0.8);
+
+  doc.font("Helvetica-Bold").fontSize(11).text("Principal's Remark:");
+  doc.font("Helvetica").fontSize(11).text(cmp.principal.comments || "No remark given.", { width: doc.page.width - doc.page.margins.left - doc.page.margins.right });
+  doc.moveDown(1.5);
+
+  doc.font("Helvetica").fontSize(9).fillColor("#898781")
+    .text(`Self-appraisal submitted: ${cmp.self.submittedAt ? new Date(cmp.self.submittedAt).toLocaleDateString() : "—"}`)
+    .text(`Principal rating submitted: ${cmp.principal.submittedAt ? new Date(cmp.principal.submittedAt).toLocaleDateString() : "—"}`)
+    .text(`Generated: ${new Date().toLocaleDateString()}`);
+
+  doc.end();
+});
+
+// ---------------------------------------------------------------------------
 // Exports (principal only)
 // ---------------------------------------------------------------------------
-app.get("/api/export/csv/:teacherId", requirePrincipal, (req, res) => {
+app.get("/api/export/csv/:teacherId", requirePrincipalOrAdmin, (req, res) => {
   const teacher = db.teachers.find(t => t.id === req.params.teacherId);
   if (!teacher) return res.status(404).json({ error: "Teacher not found." });
   const cmp = buildComparison(teacher);
 
   const rows = [
     ["Teacher", teacher.name],
-    ["Subject", teacher.subject || ""],
+    ["Department", teacher.department || ""],
+    ["Section", teacher.section || ""],
     ["Self-Rating Submitted", cmp.self ? cmp.self.submittedAt : "Not submitted"],
     ["Principal Rating Submitted", cmp.principal ? cmp.principal.submittedAt : "Not submitted"],
+    ["Overall Grade", cmp.overall.gradeLabel || ""],
     [],
     ["#", "Category", "Question", "Self Rating", "Self Label", "Principal Rating", "Principal Label", "Gap (Principal - Self)"]
   ];
@@ -456,12 +756,12 @@ app.get("/api/export/csv/:teacherId", requirePrincipal, (req, res) => {
   res.send("﻿" + toCsv(rows)); // BOM so Excel opens UTF-8 correctly
 });
 
-app.get("/api/export/csv", requirePrincipal, (req, res) => {
-  const rows = [["Teacher", "Subject", "#", "Category", "Question", "Self Rating", "Self Label", "Principal Rating", "Principal Label", "Gap (Principal - Self)"]];
+app.get("/api/export/csv", requirePrincipalOrAdmin, (req, res) => {
+  const rows = [["Teacher", "Department", "Section", "#", "Category", "Question", "Self Rating", "Self Label", "Principal Rating", "Principal Label", "Gap (Principal - Self)"]];
   db.teachers.forEach(teacher => {
     const cmp = buildComparison(teacher);
     cmp.rows.forEach(r => {
-      rows.push([teacher.name, teacher.subject || "", r.id, r.category, r.text, r.self ?? "", ratingLabel(r.self), r.principal ?? "", ratingLabel(r.principal), r.gap ?? ""]);
+      rows.push([teacher.name, teacher.department || "", teacher.section || "", r.id, r.category, r.text, r.self ?? "", ratingLabel(r.self), r.principal ?? "", ratingLabel(r.principal), r.gap ?? ""]);
     });
   });
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -469,16 +769,18 @@ app.get("/api/export/csv", requirePrincipal, (req, res) => {
   res.send("﻿" + toCsv(rows));
 });
 
-app.get("/api/export/summary.csv", requirePrincipal, (req, res) => {
-  const rows = [["Teacher", "Subject", "Self Average", "Principal Average", "Gap (Principal - Self)", "Self Submitted", "Principal Submitted"]];
+app.get("/api/export/summary.csv", requirePrincipalOrAdmin, (req, res) => {
+  const rows = [["Teacher", "Department", "Section", "Self Average", "Principal Average", "Overall Grade", "Gap (Principal - Self)", "Self Submitted", "Principal Submitted"]];
   db.teachers.forEach(teacher => {
     const cmp = buildComparison(teacher);
     const gap = cmp.overall.self != null && cmp.overall.principal != null ? Math.round((cmp.overall.principal - cmp.overall.self) * 100) / 100 : "";
     rows.push([
       teacher.name,
-      teacher.subject || "",
+      teacher.department || "",
+      teacher.section || "",
       cmp.overall.self ?? "",
       cmp.overall.principal ?? "",
+      cmp.overall.gradeLabel || "",
       gap,
       cmp.self ? cmp.self.submittedAt : "Not submitted",
       cmp.principal ? cmp.principal.submittedAt : "Not submitted"
@@ -489,26 +791,28 @@ app.get("/api/export/summary.csv", requirePrincipal, (req, res) => {
   res.send("﻿" + toCsv(rows));
 });
 
-app.get("/api/export/xlsx", requirePrincipal, (req, res) => {
+app.get("/api/export/xlsx", requirePrincipalOrAdmin, (req, res) => {
   const wb = XLSX.utils.book_new();
 
   // Summary sheet
-  const summaryRows = [["Teacher", "Subject", "Self Average", "Principal Average", "Gap (Principal - Self)", "Self Submitted", "Principal Submitted"]];
+  const summaryRows = [["Teacher", "Department", "Section", "Self Average", "Principal Average", "Overall Grade", "Gap (Principal - Self)", "Self Submitted", "Principal Submitted"]];
   db.teachers.forEach(teacher => {
     const cmp = buildComparison(teacher);
     const gap = cmp.overall.self != null && cmp.overall.principal != null ? Math.round((cmp.overall.principal - cmp.overall.self) * 100) / 100 : "";
     summaryRows.push([
       teacher.name,
-      teacher.subject || "",
+      teacher.department || "",
+      teacher.section || "",
       cmp.overall.self ?? "",
       cmp.overall.principal ?? "",
+      cmp.overall.gradeLabel || "",
       gap,
       cmp.self ? cmp.self.submittedAt : "Not submitted",
       cmp.principal ? cmp.principal.submittedAt : "Not submitted"
     ]);
   });
   const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-  summarySheet["!cols"] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 20 }, { wch: 22 }, { wch: 22 }];
+  summarySheet["!cols"] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 20 }, { wch: 22 }, { wch: 22 }];
   XLSX.utils.book_append_sheet(wb, summarySheet, "Summary");
 
   // One detail sheet per teacher
@@ -517,9 +821,11 @@ app.get("/api/export/xlsx", requirePrincipal, (req, res) => {
     const cmp = buildComparison(teacher);
     const rows = [
       ["Teacher", teacher.name],
-      ["Subject", teacher.subject || ""],
+      ["Department", teacher.department || ""],
+      ["Section", teacher.section || ""],
       ["Self-Rating Submitted", cmp.self ? cmp.self.submittedAt : "Not submitted"],
       ["Principal Rating Submitted", cmp.principal ? cmp.principal.submittedAt : "Not submitted"],
+      ["Overall Grade", cmp.overall.gradeLabel || ""],
       [],
       ["#", "Category", "Question", "Self Rating", "Self Label", "Principal Rating", "Principal Label", "Gap (Principal - Self)"]
     ];

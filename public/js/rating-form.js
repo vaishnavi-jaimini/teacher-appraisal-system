@@ -1,9 +1,15 @@
-// Builds the 30-question appraisal form (shared by the teacher self-rating
-// page and the principal rating page). `variant` is "self" or "principal"
-// and only controls the accent color used for selected buttons.
+// Builds the appraisal form (shared by the teacher self-rating page and the
+// principal rating page). `variant` is "self" or "principal" and only
+// controls the accent color used for selected buttons. Ratings are keyed by
+// question id (not array position), so the question bank can be edited by
+// the admin without breaking previously-saved answers.
+//
+// `referenceRatings` (optional, question id -> 1-5) shows a read-only badge
+// next to each question — used on the principal's rating page to display
+// the teacher's own self-score for that question while she grades it.
 
-function buildRatingForm(container, { questions, categories, scale, variant, existingRatings, existingComments }) {
-  const ratings = existingRatings ? existingRatings.slice() : new Array(questions.length).fill(null);
+function buildRatingForm(container, { questions, categories, scale, variant, existingRatings, existingComments, referenceRatings, referenceLabel }) {
+  const ratings = existingRatings ? { ...existingRatings } : {};
 
   const legend = document.createElement("div");
   legend.className = "scale-legend";
@@ -36,7 +42,11 @@ function buildRatingForm(container, { questions, categories, scale, variant, exi
 
       const text = document.createElement("div");
       text.className = "question-text";
-      text.innerHTML = `<span class="question-num">${q.id}.</span>${escapeHtml(q.text)}`;
+      const refValue = referenceRatings ? referenceRatings[q.id] : null;
+      const refBadge = refValue != null
+        ? ` <span class="ref-badge" title="${escapeHtml(referenceLabel || "Reference")} score">${escapeHtml(referenceLabel || "Self")}: ${refValue}</span>`
+        : "";
+      text.innerHTML = `<span class="question-num">${q.id}.</span>${escapeHtml(q.text)}${refBadge}`;
       row.appendChild(text);
 
       const scaleEl = document.createElement("div");
@@ -47,11 +57,10 @@ function buildRatingForm(container, { questions, categories, scale, variant, exi
         btn.type = "button";
         btn.textContent = s.value;
         btn.title = s.label;
-        btn.dataset.qIndex = q.id - 1;
         btn.dataset.value = s.value;
-        if (ratings[q.id - 1] === s.value) btn.classList.add("selected");
+        if (ratings[q.id] === s.value) btn.classList.add("selected");
         btn.addEventListener("click", () => {
-          ratings[q.id - 1] = s.value;
+          ratings[q.id] = s.value;
           scaleEl.querySelectorAll("button").forEach(b => b.classList.toggle("selected", Number(b.dataset.value) === s.value));
           updateProgress();
         });
@@ -74,16 +83,16 @@ function buildRatingForm(container, { questions, categories, scale, variant, exi
   container.appendChild(commentsField);
 
   function updateProgress() {
-    const done = ratings.filter(r => r != null).length;
-    const pct = Math.round((done / ratings.length) * 100);
+    const done = questions.filter(q => ratings[q.id] != null).length;
+    const pct = Math.round((done / questions.length) * 100);
     progressFill.style.width = pct + "%";
-    progressLabel.textContent = `${done} of ${ratings.length} questions answered`;
+    progressLabel.textContent = `${done} of ${questions.length} questions answered`;
   }
   updateProgress();
 
   return {
     getRatings: () => ratings,
     getComments: () => textarea.value,
-    isComplete: () => ratings.every(r => r != null)
+    isComplete: () => questions.every(q => ratings[q.id] != null)
   };
 }

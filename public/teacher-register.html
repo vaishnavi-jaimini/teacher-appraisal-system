@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Registration — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap narrow">
+  <a class="back-link" href="/teacher-login.html">← Back to login</a>
+  <div class="card" style="margin-top:14px;">
+    <h1>First-Time Registration</h1>
+    <p class="lede">Create your account to begin your self-appraisal. If you've already registered, <a href="/teacher-login.html">log in instead</a>.</p>
+    <div class="error-msg" id="err"></div>
+
+    <div class="field">
+      <label>Full name</label>
+      <input type="text" id="name" placeholder="e.g. Asha Verma" autocomplete="name" />
+    </div>
+    <div class="field">
+      <label>Department / Subject</label>
+      <input type="text" id="department" placeholder="e.g. Mathematics" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Section</label>
+      <select id="section">
+        <option value="">Select a section…</option>
+        <option value="Primary">Primary</option>
+        <option value="Pre-Primary">Pre-Primary</option>
+        <option value="Secondary">Secondary</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Year of joining</label>
+      <input type="number" id="yearOfJoining" placeholder="e.g. 2018" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Email (optional — needed only if you want to reset your password later)</label>
+      <input type="text" id="email" placeholder="e.g. asha.verma@example.com" autocomplete="email" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="password" autocomplete="new-password" />
+    </div>
+    <div class="field">
+      <label>Confirm password</label>
+      <input type="password" id="confirmPassword" autocomplete="new-password" />
+    </div>
+
+    <div class="btn-row">
+      <button class="btn" id="register-btn">Create my account</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+(function () {
+  const err = document.getElementById("err");
+
+  document.getElementById("register-btn").addEventListener("click", async () => {
+    hideError(err);
+    const name = document.getElementById("name").value.trim();
+    const department = document.getElementById("department").value.trim();
+    const section = document.getElementById("section").value;
+    const yearOfJoining = document.getElementById("yearOfJoining").value;
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const confirmPassword = document.getElementById("confirmPassword").value;
+
+    if (!name) return showError(err, "Enter your name.");
+    if (!section) return showError(err, "Select your section.");
+    if (!yearOfJoining) return showError(err, "Enter your year of joining.");
+    if (!password || password.length < 4) return showError(err, "Password must be at least 4 characters.");
+    if (password !== confirmPassword) return showError(err, "Passwords do not match.");
+
+    try {
+      await api("/api/teacher/register", {
+        method: "POST",
+        body: JSON.stringify({ name, department, section, yearOfJoining, email, password })
+      });
+      window.location.href = "/teacher-dashboard.html";
+    } catch (e) {
+      showError(err, e.message);
+    }
+  });
+})();
+</script>
+</body>
+</html>

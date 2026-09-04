@@ -15,29 +15,12 @@
 <div class="wrap">
   <div class="card">
     <h1>Principal Dashboard</h1>
-    <p class="lede">Add teachers, rate each one on the same 30 questions, and export a comparison of self-ratings vs. your ratings.</p>
+    <p class="lede">Grade each teacher and export results. Teacher accounts and appraisal questions are managed by the admin.</p>
 
     <div class="btn-row">
       <a class="btn" href="/api/export/xlsx">⬇ Download Excel (.xlsx) — all teachers</a>
       <a class="btn secondary" href="/api/export/csv">⬇ Download CSV — full detail</a>
       <a class="btn secondary" href="/api/export/summary.csv">⬇ Download CSV — summary</a>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Add a teacher</h2>
-    <div class="error-msg" id="add-err"></div>
-    <div id="pin-callout"></div>
-    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
-      <div class="field" style="flex:1; min-width:180px; margin-bottom:0;">
-        <label>Name</label>
-        <input type="text" id="new-name" placeholder="e.g. Asha Verma" />
-      </div>
-      <div class="field" style="flex:1; min-width:180px; margin-bottom:0;">
-        <label>Subject / Grade (optional)</label>
-        <input type="text" id="new-subject" placeholder="e.g. Grade 6 Science" />
-      </div>
-      <button class="btn" id="add-btn">Add teacher</button>
     </div>
   </div>
 
@@ -71,25 +54,6 @@
   if (!session) return;
   await loadTeachers();
 
-  document.getElementById("add-btn").addEventListener("click", async () => {
-    const err = document.getElementById("add-err");
-    hideError(err);
-    document.getElementById("pin-callout").innerHTML = "";
-    const name = document.getElementById("new-name").value.trim();
-    const subject = document.getElementById("new-subject").value.trim();
-    if (!name) return showError(err, "Enter the teacher's name.");
-    try {
-      const res = await api("/api/principal/teachers", { method: "POST", body: JSON.stringify({ name, subject }) });
-      document.getElementById("new-name").value = "";
-      document.getElementById("new-subject").value = "";
-      document.getElementById("pin-callout").innerHTML =
-        `<div class="pin-callout">Teacher <strong>${escapeHtml(res.teacher.name)}</strong> added. Their temporary setup code is <span class="pin">${res.pin}</span> — write this down and give it to them now, it will not be shown again. They'll use it to log in once, then be asked to create their own permanent PIN (you can issue a new setup code later from the list below if needed).</div>`;
-      await loadTeachers();
-    } catch (e) {
-      showError(err, e.message);
-    }
-  });
-
   document.getElementById("pw-btn").addEventListener("click", async () => {
     const err = document.getElementById("pw-err");
     const success = document.getElementById("pw-success");
@@ -107,30 +71,29 @@
   });
 
   async function loadTeachers() {
-    const { teachers } = await api("/api/principal/teachers");
+    const { teachers } = await api("/api/teachers/list");
     const host = document.getElementById("teacher-list");
     if (!teachers.length) {
-      host.innerHTML = `<div class="empty-state">No teachers added yet. Add one above to get started.</div>`;
+      host.innerHTML = `<div class="empty-state">No teachers yet — ask the admin to add one, or wait for teachers to register themselves.</div>`;
       return;
     }
     host.innerHTML = `
       <div class="table-wrap">
       <table class="data-table">
         <thead><tr>
-          <th>Name</th><th>Subject</th><th>Self-Appraisal</th><th>Principal Rating</th><th></th>
+          <th>Name</th><th>Department</th><th>Section</th><th>Self-Graded</th><th>Your Rating</th><th></th>
         </tr></thead>
         <tbody>
           ${teachers.map(t => `
             <tr>
-              <td>${escapeHtml(t.name)}${t.pinIsTemporary ? `<br/><span class="badge pending" style="margin-top:4px;">Awaiting PIN setup</span>` : ""}</td>
-              <td>${escapeHtml(t.subject || "—")}</td>
+              <td>${escapeHtml(t.name)}</td>
+              <td>${escapeHtml(t.department || "—")}</td>
+              <td>${escapeHtml(t.section || "—")}</td>
               <td>${t.selfDone ? `<span class="badge done">Submitted</span>` : `<span class="badge pending">Pending</span>`}</td>
               <td>${t.principalDone ? `<span class="badge done">Submitted</span>` : `<span class="badge pending">Pending</span>`}</td>
               <td style="white-space:nowrap;">
                 <a class="btn small orange" href="/principal-rate.html?teacherId=${t.id}">${t.principalDone ? "Edit rating" : "Rate teacher"}</a>
                 ${t.selfDone && t.principalDone ? `<a class="btn small secondary" href="/comparison.html?teacherId=${t.id}">Compare</a>` : ""}
-                <button class="btn small secondary" data-reset="${t.id}" data-name="${escapeHtml(t.name)}">New setup code</button>
-                <button class="btn small danger" data-remove="${t.id}" data-name="${escapeHtml(t.name)}">Remove</button>
               </td>
             </tr>
           `).join("")}
@@ -138,24 +101,6 @@
       </table>
       </div>
     `;
-
-    host.querySelectorAll("[data-reset]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const id = btn.dataset.reset;
-        const res = await api(`/api/principal/teachers/${id}/reset-pin`, { method: "POST" });
-        document.getElementById("pin-callout").innerHTML =
-          `<div class="pin-callout">New temporary setup code for <strong>${escapeHtml(btn.dataset.name)}</strong>: <span class="pin">${res.pin}</span> — they'll be asked to create a new permanent PIN the next time they log in.</div>`;
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      });
-    });
-
-    host.querySelectorAll("[data-remove]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        if (!confirm(`Remove ${btn.dataset.name} and all their appraisal data? This cannot be undone.`)) return;
-        await api(`/api/principal/teachers/${btn.dataset.remove}`, { method: "DELETE" });
-        await loadTeachers();
-      });
-    });
   }
 })();
 </script>

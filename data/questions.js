@@ -1,7 +1,12 @@
-// The 30 standard teacher appraisal questions, grouped into 8 categories.
+// Seed data only. The live, admin-editable question bank lives in
+// data/db.json (see data/store.js) and is seeded from DEFAULT_QUESTIONS the
+// first time the app runs. Editing this file after that has no effect on an
+// existing db.json — use the principal dashboard's question manager instead.
+//
 // Both the teacher (self-appraisal) and the principal (appraisal) answer the
-// exact same 30 questions on the same 1-5 scale, so the two sets of scores
-// can be directly compared question-by-question.
+// exact same questions on the same 1-5 scale, so the two sets of scores can
+// be directly compared question-by-question. The app enforces a minimum of
+// 30 questions at all times.
 
 const RATING_SCALE = [
   { value: 1, label: "Needs Improvement" },
@@ -11,7 +16,7 @@ const RATING_SCALE = [
   { value: 5, label: "Excellent" }
 ];
 
-const QUESTIONS = [
+const DEFAULT_QUESTIONS = [
   // Lesson Planning & Preparation
   { id: 1, category: "Lesson Planning & Preparation", text: "Prepares well-structured lesson plans aligned with the curriculum." },
   { id: 2, category: "Lesson Planning & Preparation", text: "Sets clear, measurable learning objectives for each lesson." },
@@ -59,6 +64,4 @@ const QUESTIONS = [
   { id: 30, category: "Use of Technology & Innovation", text: "Adapts teaching approach based on feedback and reflection." }
 ];
 
-const CATEGORIES = [...new Set(QUESTIONS.map(q => q.category))];
-
-module.exports = { QUESTIONS, CATEGORIES, RATING_SCALE };
+module.exports = { DEFAULT_QUESTIONS, RATING_SCALE };

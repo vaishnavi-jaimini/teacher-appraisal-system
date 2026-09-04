@@ -46,6 +46,8 @@ function renderTopbar(session) {
   }
   if (session.role === "principal") {
     el.innerHTML = `<span>Signed in as <strong>Principal</strong></span><button class="btn secondary small" id="logout-btn">Log out</button>`;
+  } else if (session.role === "admin") {
+    el.innerHTML = `<span>Signed in as <strong>Admin</strong></span><button class="btn secondary small" id="logout-btn">Log out</button>`;
   } else {
     el.innerHTML = `<span>Signed in as <strong>${escapeHtml(session.teacher.name)}</strong></span><button class="btn secondary small" id="logout-btn">Log out</button>`;
   }
@@ -62,7 +64,8 @@ function escapeHtml(str) {
 async function requireRole(role) {
   const session = await api("/api/session");
   if (!session.role || (role && session.role !== role)) {
-    window.location.href = role === "principal" ? "/principal-login.html" : "/teacher-login.html";
+    const loginPages = { principal: "/principal-login.html", admin: "/admin-login.html", teacher: "/teacher-login.html" };
+    window.location.href = loginPages[role] || "/teacher-login.html";
     return null;
   }
   renderTopbar(session);
