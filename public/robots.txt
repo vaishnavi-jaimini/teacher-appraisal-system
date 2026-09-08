@@ -1,0 +1,4 @@
+# This is a private internal tool (staff appraisal). It should not be
+# crawled or indexed by anyone.
+User-agent: *
+Disallow: /

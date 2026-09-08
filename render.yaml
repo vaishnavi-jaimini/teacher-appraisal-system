@@ -1,0 +1,27 @@
+# Render Blueprint — deploys the app as a free web service.
+# Create it at https://dashboard.render.com/blueprints (New > Blueprint) after
+# connecting the GitHub repo.
+#
+# Render sets $PORT automatically; server.js already reads process.env.PORT.
+# Optional SMTP_* vars (real password-reset emails) can be added later in the
+# service's Environment tab — without them, reset codes print to the logs.
+services:
+  - type: web
+    name: teacher-appraisal-system
+    runtime: node
+    plan: free
+    region: virginia          # close to the Neon DB (us-east-1)
+    branch: main
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      # Paste the Neon pooled connection string when Render prompts.
+      - key: DATABASE_URL
+        sync: false
+      # Render generates a strong value once and keeps it stable.
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: NODE_VERSION
+        value: "20"
