@@ -17,7 +17,6 @@
   <div class="card" style="margin-top:14px;">
     <h1 id="title">Rate Teacher</h1>
     <p class="lede">Rate this teacher on every question using the 1–5 scale. Where she's already graded herself, her self-score is shown next to the question.</p>
-    <div class="success-msg" id="success">Saved! Your rating for this teacher has been recorded.</div>
     <div class="error-msg" id="err"></div>
     <div id="note"></div>
     <div id="form-host"></div>
@@ -37,7 +36,6 @@
   const params = new URLSearchParams(window.location.search);
   const teacherId = params.get("teacherId");
   const err = document.getElementById("err");
-  const success = document.getElementById("success");
   if (!teacherId) { showError(err, "No teacher specified."); return; }
 
   let form;
@@ -67,15 +65,13 @@
 
   document.getElementById("save-btn").addEventListener("click", async () => {
     hideError(err);
-    success.classList.remove("show");
     if (!form.isComplete()) return showError(err, "Please answer all 30 questions before saving.");
     try {
       await api(`/api/principal/rating/${teacherId}`, {
         method: "POST",
         body: JSON.stringify({ ratings: form.getRatings(), comments: form.getComments() })
       });
-      success.classList.add("show");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.location.href = "/thank-you.html?role=principal";
     } catch (e) {
       showError(err, e.message);
     }

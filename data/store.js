@@ -50,7 +50,12 @@ function verifySecret(secret, hash, salt) {
 // ---------------------------------------------------------------------------
 let initPromise = null;
 function init() {
-  if (!initPromise) initPromise = migrate();
+  if (!initPromise) {
+    // Don't cache a failed attempt — a transient connection error (e.g. a
+    // slow Neon cold-start) would otherwise permanently break this warm
+    // instance, since every future request reuses the same rejected promise.
+    initPromise = migrate().catch(err => { initPromise = null; throw err; });
+  }
   return initPromise;
 }
 

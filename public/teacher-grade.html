@@ -17,7 +17,6 @@
   <div class="card" style="margin-top:14px;">
     <h1 id="title">Grade Yourself</h1>
     <p class="lede">Rate yourself honestly on every question using the 1–5 scale. You can update your answers any time before your principal reviews them — later submissions overwrite earlier ones. Questions are set by your school's admin.</p>
-    <div class="success-msg" id="success">Saved! Your self-appraisal has been recorded.</div>
     <div class="error-msg" id="err"></div>
     <div id="form-host"></div>
     <div class="btn-row">
@@ -34,7 +33,6 @@
   if (!session) return;
 
   const err = document.getElementById("err");
-  const success = document.getElementById("success");
   let form;
 
   try {
@@ -57,7 +55,6 @@
 
   document.getElementById("save-btn").addEventListener("click", async () => {
     hideError(err);
-    success.classList.remove("show");
     if (!form.isComplete()) {
       return showError(err, "Please answer every question before saving.");
     }
@@ -66,8 +63,7 @@
         method: "POST",
         body: JSON.stringify({ ratings: form.getRatings(), comments: form.getComments() })
       });
-      success.classList.add("show");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.location.href = "/thank-you.html?role=teacher";
     } catch (e) {
       showError(err, e.message);
     }

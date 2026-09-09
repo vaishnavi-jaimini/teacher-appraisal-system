@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Thank You — Teacher Appraisal System</title>
+<link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html">📋 Teacher Appraisal System</a>
+  <div class="who" id="topbar-who"></div>
+</header>
+
+<div class="wrap">
+  <div class="card hero-card">
+    <div style="font-size:52px; line-height:1; margin-bottom:10px;">✅</div>
+    <h1>Thank You!</h1>
+    <p class="lede" id="message">Your appraisal has been submitted successfully.</p>
+    <div class="btn-row" style="justify-content:center; margin-top:20px;">
+      <a class="btn" href="/index.html">Return to Home</a>
+      <a class="btn secondary" id="secondary-btn" style="display:none;"></a>
+    </div>
+  </div>
+</div>
+
+<footer class="foot">Runs locally on the school network — no internet connection required.</footer>
+
+<script src="/js/common.js"></script>
+<script>
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  const role = params.get("role");
+  const message = document.getElementById("message");
+  const secondary = document.getElementById("secondary-btn");
+
+  if (role === "teacher") {
+    message.textContent = "Your self-appraisal has been submitted successfully.";
+    secondary.textContent = "Back to My Dashboard";
+    secondary.href = "/teacher-dashboard.html";
+    secondary.style.display = "";
+  } else if (role === "principal") {
+    message.textContent = "Your rating for this teacher has been saved successfully.";
+    secondary.textContent = "Rate Another Teacher";
+    secondary.href = "/principal-dashboard.html";
+    secondary.style.display = "";
+  }
+
+  api("/api/session").then(renderTopbar).catch(() => {});
+})();
+</script>
+</body>
+</html>
